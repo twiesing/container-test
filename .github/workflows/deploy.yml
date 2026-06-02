@@ -22,7 +22,7 @@ jobs:
 
       - name: Image-Referenz bestimmen
         id: meta
-        run: echo "image=${REGISTRY}/${IMAGE_NAME}:${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+        run: echo "image=${REGISTRY}/${IMAGE_NAME}:latest" >> "$GITHUB_OUTPUT"
 
       - name: An GHCR anmelden
         uses: docker/login-action@v3
