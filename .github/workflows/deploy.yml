@@ -1,0 +1,84 @@
+name: Build, Deploy & Verify
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      image: ${{ steps.meta.outputs.image }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Image-Referenz bestimmen
+        id: meta
+        run: echo "image=${REGISTRY}/${IMAGE_NAME}:${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+
+      - name: An GHCR anmelden
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Image bauen und pushen
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          build-args: |
+            GIT_COMMIT=${{ github.sha }}
+          tags: ${{ steps.meta.outputs.image }}
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Auf mStudio deployen
+        uses: mittwald/deploy-container-action@v1
+        env:
+          IMAGE: ${{ needs.build.outputs.image }}
+        with:
+          api_token: ${{ secrets.MITTWALD_API_TOKEN }}
+          stack_id: ${{ secrets.MITTWALD_STACK_ID }}
+          services_yaml: |
+            services:
+              web:
+                description: "nginx commit server"
+                image: {{ .Env.IMAGE }}
+                ports:
+                  - "80/tcp"
+
+  verify:
+    needs: [build, deploy]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ausgelieferten Commit prüfen (retry 1s, max 2 min)
+        env:
+          DEPLOY_URL: ${{ vars.DEPLOY_URL }}
+          EXPECTED: ${{ github.sha }}
+        run: |
+          deadline=$((SECONDS + 120))
+          while true; do
+            actual="$(curl -fsS "${DEPLOY_URL%/}/commit" 2>/dev/null || true)"
+            if [ "$actual" = "$EXPECTED" ]; then
+              echo "OK: ausgelieferter Commit = $actual"
+              exit 0
+            fi
+            if [ "$SECONDS" -ge "$deadline" ]; then
+              echo "Timeout nach 2 min. Erwartet '$EXPECTED', erhalten '$actual'." >&2
+              exit 1
+            fi
+            echo "Noch nicht aktuell (erhalten '$actual'), neuer Versuch in 1s ..."
+            sleep 1
+          done
