@@ -5,6 +5,10 @@ on:
     branches: [main]
   workflow_dispatch:
 
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: false
+
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
@@ -22,7 +26,7 @@ jobs:
 
       - name: Image-Referenz bestimmen
         id: meta
-        run: echo "image=${REGISTRY}/${IMAGE_NAME}:${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+        run: echo "image=${REGISTRY}/${IMAGE_NAME}:latest" >> "$GITHUB_OUTPUT"
 
       - name: An GHCR anmelden
         uses: docker/login-action@v3
@@ -46,20 +50,17 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     steps:
-      - name: Auf mStudio deployen
-        uses: mittwald/deploy-container-action@v1
+      - name: Pull-Image-Webhook ausloesen
         env:
-          IMAGE: ${{ needs.build.outputs.image }}
-        with:
-          api_token: ${{ secrets.MITTWALD_API_TOKEN }}
-          stack_id: ${{ secrets.MITTWALD_STACK_ID }}
-          services_yaml: |
-            services:
-              web:
-                description: "nginx commit server"
-                image: {{ .Env.IMAGE }}
-                ports:
-                  - "80/tcp"
+          WEBHOOK_URL: ${{ secrets.MITTWALD_PULL_IMAGE_WEBHOOK }}
+        run: |
+          code="$(curl -sS --connect-timeout 10 --max-time 60 \
+            -o /dev/null -w '%{http_code}' "$WEBHOOK_URL")"
+          echo "Webhook-Antwort: $code"
+          case "$code" in
+            2*) ;;
+            *) echo "Webhook fehlgeschlagen" >&2; exit 1 ;;
+          esac
 
   verify:
     needs: [build, deploy]
